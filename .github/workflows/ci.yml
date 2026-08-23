@@ -39,11 +39,13 @@ jobs:
       - name: Validation Composer
         run: composer validate --no-check-publish
 
+      - name: Préparation de l'environnement
+        run: |
+          cp .env.example .env
+          mkdir -p var/photos var/share
+
       - name: Installation des dépendances
         run: composer install --prefer-dist --no-interaction --no-progress
-
-      - name: Préparation des dossiers
-        run: mkdir -p var/photos var/share
 
       - name: Tests PHPUnit
         run: bash scripts/test.sh
