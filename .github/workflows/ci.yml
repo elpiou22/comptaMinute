@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  checks:
+    name: Tests et qualité
+    runs-on: ubuntu-latest
+
+    env:
+      APP_ENV: test
+      APP_SECRET: ci_secret
+      APP_SHARE_DIR: var/share
+      DEFAULT_URI: http://localhost
+      DATABASE_URL: sqlite:///%kernel.project_dir%/var/data.db
+      PHOTOS_DIR: var/photos
+      API_KEY: ci_api_key
+      USER_KEYS: legacy,test
+      CORS_ALLOW_ORIGIN: '^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$'
+
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      - name: Installation de PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: ctype, dom, iconv, mbstring, xml, zip, sqlite3, pdo_sqlite
+          coverage: none
+
+      - name: Validation Composer
+        run: composer validate --no-check-publish
+
+      - name: Installation des dépendances
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Préparation des dossiers
+        run: mkdir -p var/photos var/share
+
+      - name: Tests PHPUnit
+        run: bash scripts/test.sh
+
+      - name: Analyse PHPStan
+        run: bash scripts/quality.sh
+
+      - name: Audit des dépendances
+        run: bash scripts/security.sh
