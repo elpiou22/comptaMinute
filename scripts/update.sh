@@ -20,7 +20,7 @@ echo "Tests unitaires"
 php bin/phpunit --testdox
 
 echo "Analyse statique"
-vendor/bin/phpstan analyse --no-progress
+vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
 echo "Reload cache Symfony"
 php bin/console cache:clear --env=prod
