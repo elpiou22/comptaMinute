@@ -75,7 +75,7 @@ class FileController extends AbstractController
   #[Route('/upload', name: 'upload', methods: ['POST'])]
   public function uploadFile(Request $request): Response
   {
-    /** @var UploadedFile[] $files */
+    /** @var UploadedFile|UploadedFile[]|null $files */
     $files = $request->files->get('files') ?? [];
     if (!is_array($files)) $files = [$files];
     $date = $request->request->get('date'); // ex: "2026-01-14"
@@ -182,7 +182,7 @@ class FileController extends AbstractController
 
       $dayPath = $monthDir . DIRECTORY_SEPARATOR . $dayName;
 
-      // Compte rapide des images (stop dès qu'on en trouve une si tu veux)
+      // Compte rapide des images
       $finder = new Finder();
       $finder->files()
           ->in($dayPath)
@@ -256,7 +256,7 @@ class FileController extends AbstractController
       $photos[] = [
           'name' => $filename,
           'path' => $relativePath,
-        // optionnel si tu veux télécharger / afficher plus tard
+
           'url'  => '/api/photo?path=' . rawurlencode($relativePath),
       ];
     }
