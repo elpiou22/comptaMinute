@@ -15,6 +15,12 @@ use ZipArchive;
 class FileController extends AbstractController
 {
 
+  /**
+   * Transforme une date en chemin de dossier.
+   *
+   * @param string|null $date Date au format YYYY-MM-DD.
+   * @return string Chemin au format YYYY/MM/DD.
+   */
   private function dateToPath(?string $date): string
   {
     $dt = $date ? \DateTimeImmutable::createFromFormat('Y-m-d', $date) : new \DateTimeImmutable();
@@ -24,9 +30,20 @@ class FileController extends AbstractController
     return $dt->format('Y/m/d');
   }
 
+  /**
+   * Recupere et controle la cle utilisateur envoyee par l'application.
+   *
+   * @param Request $request Requete HTTP recue par l'API.
+   * @return string Cle utilisateur validee.
+   */
   private function resolveUserKey(Request $request): string
   {
-    $userKey = trim($request->headers->get('X-User-Key', 'legacy'));
+    $rawUserKey = $request->headers->get('X-User-Key');
+    if (!is_string($rawUserKey) || trim($rawUserKey) === '') {
+      throw new \RuntimeException('Missing user key', 401);
+    }
+
+    $userKey = trim($rawUserKey);
     if (!preg_match('/^[a-zA-Z0-9_-]{3,64}$/', $userKey)) {
       throw new \RuntimeException('Invalid user key', 401);
     }
@@ -43,6 +60,12 @@ class FileController extends AbstractController
     return $userKey;
   }
 
+  /**
+   * Construit le dossier de stockage associe a l'utilisateur.
+   *
+   * @param Request $request Requete contenant la cle utilisateur.
+   * @return string Chemin absolu vers l'espace de stockage utilisateur.
+   */
   private function storageDirForUser(Request $request): string
   {
     $userKey = $this->resolveUserKey($request);
@@ -51,6 +74,12 @@ class FileController extends AbstractController
     return $baseDir . DIRECTORY_SEPARATOR . 'users' . DIRECTORY_SEPARATOR . $userKey;
   }
 
+  /**
+   * Construit le dossier qui contient les exports ZIP de l'utilisateur.
+   *
+   * @param Request $request Requete contenant la cle utilisateur.
+   * @return string Chemin absolu vers le dossier d'extractions.
+   */
   private function extractionRootForUser(Request $request): string
   {
     $userKey = $this->resolveUserKey($request);
@@ -60,6 +89,12 @@ class FileController extends AbstractController
         . DIRECTORY_SEPARATOR . $userKey;
   }
 
+  /**
+   * Convertit une erreur utilisateur en reponse JSON 401.
+   *
+   * @param \RuntimeException $e Erreur levee pendant le controle utilisateur.
+   * @return JsonResponse|null Reponse 401 ou null si l'erreur ne concerne pas l'authentification.
+   */
   private function unauthorizedUserResponse(\RuntimeException $e): ?JsonResponse
   {
     if ($e->getCode() !== 401) {
@@ -72,9 +107,16 @@ class FileController extends AbstractController
     ], 401);
   }
 
+  /**
+   * Enregistre les justificatifs envoyes par l'application mobile.
+   *
+   * @param Request $request Requete contenant les fichiers et la date choisie.
+   * @return Response Reponse JSON avec le resultat de l'upload.
+   */
   #[Route('/upload', name: 'upload', methods: ['POST'])]
   public function uploadFile(Request $request): Response
   {
+    // Lecture des fichiers
     /** @var UploadedFile|UploadedFile[]|null $files */
     $files = $request->files->get('files') ?? [];
     if (!is_array($files)) $files = [$files];
@@ -84,6 +126,7 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'No files provided'], 400);
     }
 
+    // Controle cle utilisateur
     try {
       $baseDir = $this->storageDirForUser($request);
     } catch (\RuntimeException $e) {
@@ -95,11 +138,13 @@ class FileController extends AbstractController
 
     $saved = [];
 
+    // Enregistrement des fichiers
     foreach ($files as $file) {
       $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
       $safeName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $originalName);
       $ext = strtolower((string) $file->getClientOriginalExtension());
 
+      // Detection extension fichier
       if ($ext === '' || $ext === 'bin') {
         $guessed = $file->guessExtension(); // basé sur le contenu (mime)
         if ($guessed) {
@@ -117,6 +162,7 @@ class FileController extends AbstractController
       }
       $newName = uniqid('', true) . '-' . $safeName . '.' . $ext;
 
+      // Creation dossier jour
       $dayPath = $this->dateToPath($date);
       $targetDir = $baseDir . DIRECTORY_SEPARATOR . $dayPath;
 
@@ -128,6 +174,7 @@ class FileController extends AbstractController
       $saved[] = $dayPath . '/' . $newName;
     }
 
+    // Retour upload JSON
     return $this->json([
         'result' => 'success',
         'date' => $date,
@@ -135,9 +182,16 @@ class FileController extends AbstractController
     ]);
   }
 
+  /**
+   * Liste les jours d'un mois qui contiennent au moins une photo.
+   *
+   * @param Request $request Requete contenant le mois au format YYYY-MM.
+   * @return Response Reponse JSON avec les jours et les compteurs.
+   */
   #[Route('/api/photos/month', name: 'api_photos_by_month', methods: ['GET'])]
   public function listDaysWithPhotos(Request $request): Response
   {
+    // Validation du mois
     $month = $request->query->get('month'); // "YYYY-MM"
     if (!$month || !preg_match('/^\d{4}-\d{2}$/', $month)) {
       return $this->json(['result' => 'error', 'message' => 'Missing/invalid month (YYYY-MM)'], 400);
@@ -151,6 +205,7 @@ class FileController extends AbstractController
     $year = $dt->format('Y');
     $m = $dt->format('m');
 
+    // Controle cle utilisateur
     try {
       $baseDir = $this->storageDirForUser($request);
     } catch (\RuntimeException $e) {
@@ -174,6 +229,7 @@ class FileController extends AbstractController
     $daysWithPhotos = [];
     $countsByDay = [];
 
+    // Parcours des jours
     foreach (new \DirectoryIterator($monthDir) as $dayEntry) {
       if ($dayEntry->isDot() || !$dayEntry->isDir()) continue;
 
@@ -199,6 +255,7 @@ class FileController extends AbstractController
 
     sort($daysWithPhotos);
 
+    // Retour calendrier JSON
     return $this->json([
         'result' => 'success',
         'month' => $month,
@@ -208,9 +265,16 @@ class FileController extends AbstractController
   }
 
 
+  /**
+   * Liste les photos stockees pour une date precise.
+   *
+   * @param Request $request Requete contenant la date au format YYYY-MM-DD.
+   * @return Response Reponse JSON avec les photos du jour.
+   */
   #[Route('/api/photos', name: 'api_photos_by_day', methods: ['GET'])]
   public function listPhotosByDay(Request $request): Response
   {
+    // Validation date recue
     $date = $request->query->get('date'); // YYYY-MM-DD
     if (!$date) {
       return $this->json(['result' => 'error', 'message' => 'Missing date (YYYY-MM-DD)'], 400);
@@ -222,6 +286,7 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => $e->getMessage()], 400);
     }
 
+    // Controle cle utilisateur
     try {
       $baseDir = $this->storageDirForUser($request);
     } catch (\RuntimeException $e) {
@@ -241,6 +306,7 @@ class FileController extends AbstractController
       ]);
     }
 
+    // Lecture des photos
     $finder = new Finder();
     $finder->files()
         ->in($dir)
@@ -261,6 +327,7 @@ class FileController extends AbstractController
       ];
     }
 
+    // Retour photos JSON
     return $this->json([
         'result' => 'success',
         'date' => $date,
@@ -269,9 +336,16 @@ class FileController extends AbstractController
     ]);
   }
 
+  /**
+   * Genere un fichier ZIP contenant les justificatifs des mois demandes.
+   *
+   * @param Request $request Requete JSON contenant la liste des mois.
+   * @return Response Reponse JSON avec les informations de l'export.
+   */
   #[Route('/api/extraction/months', name: 'api_extraction_months', methods: ['POST'])]
   public function extractMonths(Request $request): Response
   {
+    // Verification extension ZIP
     if (!class_exists(ZipArchive::class)) {
       return $this->json([
           'result' => 'error',
@@ -279,6 +353,7 @@ class FileController extends AbstractController
       ], 500);
     }
 
+    // Lecture du JSON
     $payload = json_decode($request->getContent(), true);
     $months = $payload['months'] ?? null;
 
@@ -289,6 +364,7 @@ class FileController extends AbstractController
       ], 400);
     }
 
+    // Validation des mois
     $months = array_values(array_unique(array_filter($months, 'is_string')));
     foreach ($months as $month) {
       if (!preg_match('/^\d{4}-\d{2}$/', $month)) {
@@ -299,6 +375,7 @@ class FileController extends AbstractController
       }
     }
 
+    // Controle cle utilisateur
     try {
       $baseDir = $this->storageDirForUser($request);
       $extractionRoot = $this->extractionRootForUser($request);
@@ -311,10 +388,12 @@ class FileController extends AbstractController
     $batchDirName = 'extraction_' . (new \DateTimeImmutable())->format('Ymd_His');
     $batchDir = $extractionRoot . DIRECTORY_SEPARATOR . $batchDirName;
 
+    // Creation dossier export
     if (!is_dir($batchDir)) {
       @mkdir($batchDir, 0777, true);
     }
 
+    // Creation archive ZIP
     $items = [];
     $zipName = $batchDirName . '.zip';
     $zipPath = $batchDir . DIRECTORY_SEPARATOR . $zipName;
@@ -326,6 +405,7 @@ class FileController extends AbstractController
       ], 500);
     }
 
+    // Parcours des mois
     foreach ($months as $month) {
       $dt = \DateTimeImmutable::createFromFormat('Y-m', $month);
       if (!$dt) {
@@ -361,6 +441,7 @@ class FileController extends AbstractController
 
       $photoCount = 0;
       $countsByDay = [];
+      // Ajout fichiers ZIP
       foreach ($finder as $file) {
         $day = $file->getRelativePath();
         if (!preg_match('/^\d{2}$/', $day)) {
@@ -385,6 +466,7 @@ class FileController extends AbstractController
 
     $zip->close();
 
+    // Retour export JSON
     return $this->json([
         'result' => 'success',
         'directory' => $batchDir,
@@ -394,9 +476,16 @@ class FileController extends AbstractController
     ]);
   }
 
+  /**
+   * Telecharge un fichier ZIP d'export deja genere.
+   *
+   * @param Request $request Requete contenant le dossier et le nom du fichier.
+   * @return Response Reponse fichier ou erreur JSON.
+   */
   #[Route('/api/extraction/download', name: 'api_extraction_download', methods: ['GET'])]
   public function downloadExtraction(Request $request): Response
   {
+    // Parametres export ZIP
     $batch = $request->query->get('batch');
     $file = $request->query->get('file');
 
@@ -404,6 +493,7 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Missing batch or file'], 400);
     }
 
+    // Validation du chemin
     if (
       !preg_match('/^extraction_\d{8}_\d{6}$/', $batch) ||
       !preg_match('/^(extraction_\d{8}_\d{6}|\d{4}-\d{2})\.zip$/', $file)
@@ -411,6 +501,7 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Invalid extraction file'], 400);
     }
 
+    // Controle cle utilisateur
     try {
       $extractionRoot = $this->extractionRootForUser($request);
     } catch (\RuntimeException $e) {
@@ -425,14 +516,22 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Extraction not found'], 404);
     }
 
+    // Envoi du fichier
     return $this->file($zipPath, $file);
   }
 
 
 
+  /**
+   * Affiche ou telecharge une photo stockee sur le serveur.
+   *
+   * @param Request $request Requete contenant le chemin relatif de la photo.
+   * @return Response Reponse fichier ou erreur JSON.
+   */
   #[Route('/api/photo', name: 'api_photo_get', methods: ['GET'])]
   public function getPhoto(Request $request): Response
   {
+    // Validation du chemin
     $path = $request->query->get('path');
     if (!$path) {
       return $this->json(['result' => 'error', 'message' => 'Missing path'], 400);
@@ -441,6 +540,7 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Invalid path'], 400);
     }
 
+    // Controle cle utilisateur
     try {
       $baseDir = $this->storageDirForUser($request);
     } catch (\RuntimeException $e) {
@@ -456,12 +556,20 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Not found'], 404);
     }
 
+    // Envoi de photo
     return $this->file($full);
   }
 
+  /**
+   * Supprime une photo stockee dans l'espace de l'utilisateur.
+   *
+   * @param Request $request Requete contenant le chemin relatif de la photo.
+   * @return Response Reponse JSON avec le resultat de la suppression.
+   */
   #[Route('/api/photo', name: 'api_photo_delete', methods: ['DELETE'])]
   public function deletePhoto(Request $request): Response
   {
+    // Validation du chemin
     $path = $request->query->get('path');
     if (!$path) {
       return $this->json(['result' => 'error', 'message' => 'Missing path'], 400);
@@ -470,6 +578,7 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Invalid path'], 400);
     }
 
+    // Controle cle utilisateur
     try {
       $baseDir = $this->storageDirForUser($request);
     } catch (\RuntimeException $e) {
@@ -485,10 +594,12 @@ class FileController extends AbstractController
       return $this->json(['result' => 'error', 'message' => 'Not found'], 404);
     }
 
+    // Suppression du fichier
     if (!@unlink($full)) {
       return $this->json(['result' => 'error', 'message' => 'Unable to delete photo'], 500);
     }
 
+    // Retour suppression JSON
     return $this->json(['result' => 'success']);
   }
 

@@ -36,4 +36,20 @@ final class ApiSecurityTest extends ApiTestCase
             'message' => 'Unauthorized user key',
         ], $this->jsonResponse($client));
     }
+
+    public function testApiRejectsMissingUserKey(): void
+    {
+        $client = static::createClient();
+
+        $client->request('GET', '/api/photos/month?month=2026-07', [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer '.self::API_TOKEN,
+            'HTTP_ACCEPT' => 'application/json',
+        ]);
+
+        self::assertResponseStatusCodeSame(401);
+        self::assertSame([
+            'result' => 'error',
+            'message' => 'Missing user key',
+        ], $this->jsonResponse($client));
+    }
 }
